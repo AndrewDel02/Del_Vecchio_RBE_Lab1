@@ -1,68 +1,103 @@
-#include <Arduino.h>
+/*
+ * Code for using TCC4 for precision PID timing.
+ * You'll need to set TOP to set the interval
+ *
+ * This code adds the ability to tune the gains and change the targets
+ */
+
 #include <Zumo32U4Motors.h>
 #include <Zumo32U4Encoders.h>
-#include <Wire.h>
-#include "button.h"       //include your button class from last week
-#include <event_timer.h>  //include your shiny, new event timer class
-#include "segments.h"
-#include <Robot.h>
 
-Robot robot;
-Button buttonA(14); //button A is pin 14 on the Zumo
-EventTimer timer;   //assumes you named your class EventTimer
+#include "params.h"
+#include "serial_comm.h"
 
-//use the Pololu libraries for motors and encoders
+volatile uint8_t readyToPID = 0;   //a flag that is set when the PID timer overflows
+
 Zumo32U4Motors motors;
-Zumo32U4Encoders encoders; //(we're not acutally using this in this code, but we will soon)
+
+Zumo32U4Encoders encoders;
+volatile int16_t countsLeft = 0;
+volatile int16_t countsRight = 0;
 
 void setup()
 {
   Serial.begin(115200);
-  Serial.println("Hello.");
+  while(!Serial) {}  //IF YOU DON'T COMMENT THIS OUT, YOU MUST OPEN THE SERIAL MONITOR TO START
+  Serial.println("Hi.");
 
-  buttonA.Init(); //don't forget to call Init()!
+  noInterrupts(); //disable interupts while we mess with the Timer4 registers
 
-  segments[0].leftSpeed = 0;
-  segments[0].rightSpeed = 0;
-  segments[0].duration = 10000;
+  //sets up timer 4
+  TCCR4A = 0x00; //disable some functionality -- no need to worry about this
+  TCCR4B = 0x0C; //sets the prescaler -- look in the handout for values
+  TCCR4C = 0x04; //toggles pin 6 at one-half the timer frequency
+  TCCR4D = 0x00; //normal mode
 
-  segments[1].leftSpeed = 223;
-  segments[1].rightSpeed = 200;
-  segments[1].duration = 3000;
+  OCR4C = <STUDENT TO FILL THIS IN>;   //TOP goes in OCR4C
+  TIMSK4 = 0x04; //enable overflow interrupt
 
-  segments[2].leftSpeed = 223;
-  segments[2].rightSpeed = -200;
-  segments[2].duration = 410;
+  interrupts(); //re-enable interrupts
 
-  segments[3].leftSpeed = 223;
-  segments[3].rightSpeed = 200;
-  segments[3].duration = 2500;
+  pinMode(6, OUTPUT); //COMMENT THIS OUT TO SHUT UP THE PIEZO!!!
 }
 
 void loop()
 {
-  //put in a simple event-driven structure
-  //if(SomeEvent()) HandleSomeEvent()
-  //...
-  int currentSeg = robot.currentSegment;
+  if(readyToPID) //timer flag set
+  {
+    //clear the timer flag
+    readyToPID = 0;
 
-  if (buttonA.CheckButtonPress()) {
-    Serial.println("button");
-    Serial.println(robot.getCurrentState());
-    robot.handleButtonPress();
-    Serial.println(robot.getCurrentState());
+    //for tracking previous counts
+    static int16_t prevLeft = 0;
+    static int16_t prevRight = 0;
+
+    //error sum
+    static int16_t sumLeft = 0;
+
+    /*
+     * Do PID stuffs here. Note that we turn off interupts while we read countsLeft/Right
+     * so that it won't get accidentally updated (in the ISR) while we're reading it.
+     */
+    noInterrupts();
+    int16_t speedLeft = countsLeft - prevLeft;
+    int16_t speedRight = countsRight - prevRight;
+
+    prevLeft = countsLeft;
+    prevRight = countsRight;
+    interrupts();
+
+    int16_t errorLeft = targetLeft - speedLeft;
+    sumLeft += errorLeft;
+
+    float effortLeft = Kp * errorLeft + Ki * sumLeft;
+
+    motors.setSpeeds(effortLeft, 0); //up to you to add the right motor
+
+    Serial.print(millis());
+
+    //you'll want to add more serial printout here for testing
+
+    Serial.print('\n');
   }
 
-  if (timer.CheckExpired()) {
-    Serial.println(currentSeg);
-    robot.handleTimer();
-    timer.Cancel();
-  }
+  /* for reading in gain settings
+   * CheckSerialInput() returns true when it gets a complete string, which is
+   * denoted by a newline character ('\n'). Be sure to set your Serial Monitor to
+   * append a newline
+   */
+  if(CheckSerialInput()) {ParseSerialInput();}
+}
 
-  if (robot.prevSegment != currentSeg && currentSeg != 0) { // set timer on new segment
-    timer.Start(segments[currentSeg].duration);
-  }
-  motors.setLeftSpeed(segments[currentSeg].leftSpeed);
-  motors.setRightSpeed(segments[currentSeg].rightSpeed);
-  robot.prevSegment = currentSeg;
-};
+/*
+ * ISR for timing. Basically, raise a flag on overflow. Timer4 is set up to run with a pre-scaler
+ * of 1024 and TOP is set to 249. Clock is 16 MHz, so interval is dT = (1024 * 250) / 16 MHz = 16 ms.
+ */
+ISR(TIMER4_OVF_vect)
+{
+  //Capture a "snapshot" of the encoder counts for later processing
+  countsLeft = encoders.getCountsLeft();
+  countsRight = encoders.getCountsRight();
+
+  readyToPID = 1;
+}

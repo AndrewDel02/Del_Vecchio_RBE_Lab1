@@ -62,23 +62,23 @@ static void nextNote();
 #ifdef __AVR_ATmega32U4__
 
 // Timer4 overflow interrupt
-ISR (TIMER4_OVF_vect)
-{
-  if (buzzerTimeout-- == 0)
-  {
-    DISABLE_TIMER_INTERRUPT();
-    sei();                                    // re-enable global interrupts (nextNote() is very slow)
-    TCCR4B = (TCCR4B & 0xF0) | TIMER4_CLK_8;  // select IO clock
-    unsigned int top = (F_CPU/16) / 1000;     // set TOP for freq = 1 kHz:
-    TC4H = top >> 8;                          // top 2 bits... (TC4H temporarily stores top 2 bits of 10-bit accesses)
-    OCR4C = top;                              // and bottom 8 bits
-    TC4H = 0;                                 // 0% duty cycle: top 2 bits...
-    OCR4D = 0;                                // and bottom 8 bits
-    buzzerFinished = 1;
-    if (buzzerSequence && (play_mode_setting == PLAY_AUTOMATIC))
-      nextNote();
-  }
-}
+// ISR (TIMER4_OVF_vect)
+// {
+//   if (buzzerTimeout-- == 0)
+//   {
+//     DISABLE_TIMER_INTERRUPT();
+//     sei();                                    // re-enable global interrupts (nextNote() is very slow)
+//     TCCR4B = (TCCR4B & 0xF0) | TIMER4_CLK_8;  // select IO clock
+//     unsigned int top = (F_CPU/16) / 1000;     // set TOP for freq = 1 kHz:
+//     TC4H = top >> 8;                          // top 2 bits... (TC4H temporarily stores top 2 bits of 10-bit accesses)
+//     OCR4C = top;                              // and bottom 8 bits
+//     TC4H = 0;                                 // 0% duty cycle: top 2 bits...
+//     OCR4D = 0;                                // and bottom 8 bits
+//     buzzerFinished = 1;
+//     if (buzzerSequence && (play_mode_setting == PLAY_AUTOMATIC))
+//       nextNote();
+//   }
+// }
 
 #else
 
