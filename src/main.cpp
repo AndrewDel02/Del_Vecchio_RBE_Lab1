@@ -9,15 +9,34 @@
 #include <Zumo32U4Encoders.h>
 
 #include "params.h"
-#include "serial_comm.h"
+#include "serial_comms.h"
 
 volatile uint8_t readyToPID = 0;   //a flag that is set when the PID timer overflows
 
 Zumo32U4Motors motors;
-
 Zumo32U4Encoders encoders;
+
 volatile int16_t countsLeft = 0;
 volatile int16_t countsRight = 0;
+
+// take target (effort) and current speed (ticks/sec) and returns effort
+int16_t CalcPIDLeft(float targetFLeft, int16_t currentSpeedLeft) {
+  float currentFractionLeft = currentSpeedLeft / 75; // convert ticks/sec to % of total speed
+  // 75 isn't exact across both motors and both direction so I have to fix this
+  if (currentFractionLeft > 1) { currentFractionLeft = 1; }
+  else if (currentFractionLeft < 0) { currentFractionLeft = 0; }
+
+  return targetFLeft - (currentFractionLeft * 400);
+}
+
+float CalcPIDRight(float targetFRight, float currentSpeedRight) {
+  float currentFractionRight = currentSpeedRight / 75; // convert ticks/sec to % of total speed
+
+  if (currentFractionRight > 1) { currentFractionRight = 1; }
+  else if (currentFractionRight < 0) { currentFractionRight = 0; }
+
+  return targetFRight - (currentFractionRight * 400);
+}
 
 void setup()
 {
@@ -33,12 +52,13 @@ void setup()
   TCCR4C = 0x04; //toggles pin 6 at one-half the timer frequency
   TCCR4D = 0x00; //normal mode
 
-  OCR4C = <STUDENT TO FILL THIS IN>;   //TOP goes in OCR4C
+  OCR4C = 141;   //TOP goes in OCR4C
   TIMSK4 = 0x04; //enable overflow interrupt
 
-  interrupts(); //re-enable interrupts
+  interrupts(); //re-enable interrupts    prevError = errorLeft;
 
-  pinMode(6, OUTPUT); //COMMENT THIS OUT TO SHUT UP THE PIEZO!!!
+
+  //pinMode(6, OUTPUT); //COMMENT THIS OUT TO SHUT UP THE PIEZO!!!
 }
 
 void loop()
@@ -54,6 +74,7 @@ void loop()
 
     //error sum
     static int16_t sumLeft = 0;
+    static int16_t sumRight = 0;
 
     /*
      * Do PID stuffs here. Note that we turn off interupts while we read countsLeft/Right
@@ -67,18 +88,31 @@ void loop()
     prevRight = countsRight;
     interrupts();
 
-    int16_t errorLeft = targetLeft - speedLeft;
-    sumLeft += errorLeft;
+    float errorLeft = targetLeft - speedLeft;
+    float errorRight = targetRight - speedRight;
+
+    // convert ticks/sec to effort
+    errorLeft = errorLeft / 75 * 400;
+    errorRight = errorRight / 75 * 400;
+
+    if (Ki > 0) { // fix jerk
+      sumLeft += errorLeft;
+      sumRight += errorRight;
+    }
 
     float effortLeft = Kp * errorLeft + Ki * sumLeft;
+    float effortRight = Kp * errorRight + Ki * sumRight;
 
-    motors.setSpeeds(effortLeft, 0); //up to you to add the right motor
-
-    Serial.print(millis());
-
+    motors.setSpeeds(effortLeft, effortRight); //up to you to add the right motor
     //you'll want to add more serial printout here for testing
 
-    Serial.print('\n');
+    Serial.print(targetLeft);
+    Serial.print('\t');
+    Serial.println(speedLeft);
+    //Serial.print('\t');
+    //Serial.println(errorLeft);
+
+    //Serial.print('\n');
   }
 
   /* for reading in gain settings
