@@ -2,8 +2,9 @@
 #define __PARAMS_H
 
 //PID gains -- you can edit the defaults later, after you tune the motors
-float Kp = 1.1;
-float Ki = 0;
+// gains hardcoded for driving L
+float Kp = 3;
+float Ki = .1;
 float Kd = 0;
 
 

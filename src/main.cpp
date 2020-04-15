@@ -1,13 +1,11 @@
-/*
- * Code for using TCC4 for precision PID timing.
- * You'll need to set TOP to set the interval
- *
- * This code adds the ability to tune the gains and change the targets
- */
 
 #include <Zumo32U4Motors.h>
 #include <Zumo32U4Encoders.h>
 
+#include "button.h"       //include your button class from last week
+#include <event_timer.h>  //include your shiny, new event timer class
+#include "segments.h"
+#include <Robot.h>
 #include "params.h"
 #include "serial_comms.h"
 
@@ -15,28 +13,12 @@ volatile uint8_t readyToPID = 0;   //a flag that is set when the PID timer overf
 
 Zumo32U4Motors motors;
 Zumo32U4Encoders encoders;
+Robot robot;
+Button buttonA(14); //button A is pin 14 on the Zumo
+EventTimer timer;   //assumes you named your class EventTimer
 
 volatile int16_t countsLeft = 0;
 volatile int16_t countsRight = 0;
-
-// take target (effort) and current speed (ticks/sec) and returns effort
-int16_t CalcPIDLeft(float targetFLeft, int16_t currentSpeedLeft) {
-  float currentFractionLeft = currentSpeedLeft / 75; // convert ticks/sec to % of total speed
-  // 75 isn't exact across both motors and both direction so I have to fix this
-  if (currentFractionLeft > 1) { currentFractionLeft = 1; }
-  else if (currentFractionLeft < 0) { currentFractionLeft = 0; }
-
-  return targetFLeft - (currentFractionLeft * 400);
-}
-
-float CalcPIDRight(float targetFRight, float currentSpeedRight) {
-  float currentFractionRight = currentSpeedRight / 75; // convert ticks/sec to % of total speed
-
-  if (currentFractionRight > 1) { currentFractionRight = 1; }
-  else if (currentFractionRight < 0) { currentFractionRight = 0; }
-
-  return targetFRight - (currentFractionRight * 400);
-}
 
 void setup()
 {
@@ -57,12 +39,54 @@ void setup()
 
   interrupts(); //re-enable interrupts    prevError = errorLeft;
 
+  buttonA.Init(); //don't forget to call Init()!
 
+  segments[0].leftSpeed = 0;
+  segments[0].rightSpeed = 0;
+  segments[0].duration = 10000;
+
+  segments[1].leftSpeed = 59;
+  segments[1].rightSpeed = 59;
+  segments[1].duration = 3000;
+
+  segments[2].leftSpeed = 59;
+  segments[2].rightSpeed = -59;
+  segments[2].duration = 410;
+
+  segments[3].leftSpeed = 59;
+  segments[3].rightSpeed = 59;
+  segments[3].duration = 1000;
   //pinMode(6, OUTPUT); //COMMENT THIS OUT TO SHUT UP THE PIEZO!!!
 }
 
 void loop()
 {
+  // handle state machine
+  int currentSeg = robot.currentSegment;
+
+  if (buttonA.CheckButtonPress()) {
+    Serial.println("button");
+    Serial.println(robot.getCurrentState());
+    robot.handleButtonPress();
+    Serial.println(robot.getCurrentState());
+  }
+
+  if (timer.CheckExpired()) {
+    Serial.println(currentSeg);
+    robot.handleTimer();
+    timer.Cancel();
+  }
+
+  if (robot.prevSegment != currentSeg && currentSeg != 0) { // set timer on new segment
+    timer.Start(segments[currentSeg].duration);
+  }
+
+  // instead of setting motors to segment speed, set target speed to segement speed and let PID controller set speed
+  targetLeft = segments[currentSeg].leftSpeed;
+  targetRight = segments[currentSeg].rightSpeed;
+  robot.prevSegment = currentSeg;
+
+  // handle PID
   if(readyToPID) //timer flag set
   {
     //clear the timer flag
@@ -95,7 +119,7 @@ void loop()
     errorLeft = errorLeft / 75 * 400;
     errorRight = errorRight / 75 * 400;
 
-    if (Ki > 0) { // fix jerk
+    if (Ki > 0) { // fix initial jerk by only accumulating error if Ki term exists
       sumLeft += errorLeft;
       sumRight += errorRight;
     }
@@ -103,24 +127,10 @@ void loop()
     float effortLeft = Kp * errorLeft + Ki * sumLeft;
     float effortRight = Kp * errorRight + Ki * sumRight;
 
-    motors.setSpeeds(effortLeft, effortRight); //up to you to add the right motor
-    //you'll want to add more serial printout here for testing
+    motors.setSpeeds(effortLeft, effortRight);
 
-    Serial.print(targetLeft);
-    Serial.print('\t');
-    Serial.println(speedLeft);
-    //Serial.print('\t');
-    //Serial.println(errorLeft);
-
-    //Serial.print('\n');
   }
 
-  /* for reading in gain settings
-   * CheckSerialInput() returns true when it gets a complete string, which is
-   * denoted by a newline character ('\n'). Be sure to set your Serial Monitor to
-   * append a newline
-   */
-  if(CheckSerialInput()) {ParseSerialInput();}
 }
 
 /*
